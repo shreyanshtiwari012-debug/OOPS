@@ -76,7 +76,8 @@ def test_history_flow_is_private_per_client(client):
     other = {"X-Client-Id": "zzzzzzzzzzzzzzzzzzzzzz"}
     assert client.get("/api/history", headers=other).json()["items"] == []
     assert client.get(f"/api/history/{sid}", headers=other).status_code == 404
-    assert client.delete(f"/api/history/{sid}", headers=h).json() == {"deleted": 1}
+    deleted = client.delete(f"/api/history/{sid}", headers=h).json()
+    assert deleted["deleted"] == 1 and deleted["history_enabled"] is True
     assert client.get(f"/api/history/{sid}", headers=h).status_code == 404
 
 
@@ -87,15 +88,34 @@ def test_history_header_validation(client):
     assert client.get(f"/api/history/{uuid.uuid4()}", headers={"X-Client-Id": CID}).status_code == 404
 
 
-def test_history_not_configured_returns_503():
+def test_history_not_configured_degrades_gracefully():
     # Force an unconfigured server regardless of any local .env.
     app.dependency_overrides.clear()
     unconfigured = HistoryStore(Settings(_env_file=None, supabase_url="", supabase_service_role_key=""))
     app.dependency_overrides[_store] = lambda: unconfigured
     try:
         c = TestClient(app)
-        r = c.get("/api/history", headers={"X-Client-Id": CID})
-        assert r.status_code == 503 and "not configured" in r.json()["error"]["message"]
-        assert c.post("/api/scan", json={"message": "hi"}, headers={"X-Client-Id": CID}).json()["saved"] is False
+        h = {"X-Client-Id": CID}
+
+        # Listing history must not look like a failed request in the browser.
+        r = c.get("/api/history", headers=h)
+        assert r.status_code == 200
+        body = r.json()
+        assert body["items"] == [] and body["history_enabled"] is False
+
+        # Deletes are no-ops that the frontend can safely ignore.
+        sid = str(uuid.uuid4())
+        deleted = c.delete(f"/api/history/{sid}", headers=h)
+        assert deleted.status_code == 200
+        assert deleted.json()["deleted"] == 0
+        cleared = c.delete("/api/history", headers=h)
+        assert cleared.status_code == 200
+        assert cleared.json()["deleted"] == 0
+
+        # An individual scan cannot exist without server history.
+        missing = c.get(f"/api/history/{sid}", headers=h)
+        assert missing.status_code == 404
+
+        assert c.post("/api/scan", json={"message": "hi"}, headers=h).json()["saved"] is False
     finally:
         app.dependency_overrides.clear()

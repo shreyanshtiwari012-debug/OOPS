@@ -51,9 +51,9 @@ Interactive docs: `/docs`. Errors always look like `{"error": {"code": "...", "m
 |---|---|---|
 | `POST` | `/api/scan` | Body `{"message": "..."}`. Add header `X-Client-Id` to also save to that user's history. |
 | `GET` | `/api/rules` | All rules, points, thresholds, brands checked. |
-| `GET` | `/api/history?limit=20&offset=0` | Needs `X-Client-Id`. |
+| `GET` | `/api/history?limit=20&offset=0` | Needs `X-Client-Id`. Returns `history_enabled: false` and an empty list when Supabase is not configured, so the frontend can use browser storage without a failed request. |
 | `GET` | `/api/history/{id}` | Full original result (re-open with highlights). |
-| `DELETE` | `/api/history/{id}` · `/api/history` | Delete one / all of that user's scans. |
+| `DELETE` | `/api/history/{id}` · `/api/history` | Delete one / all of that user's scans. Returns `deleted: 0` when server history is not configured. |
 | `GET` | `/health` | Which optional services are configured. |
 
 ```bash

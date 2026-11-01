@@ -11,10 +11,20 @@
  * - DELETE /api/history       (clear all history)
  */
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+// Deployed API used when the frontend is built without VITE_API_BASE_URL.
+// Set VITE_API_BASE_URL to override this (for example, a local backend).
+const PRODUCTION_API_URL = 'https://fraudora-api.vercel.app';
+
+const BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.PROD ? PRODUCTION_API_URL : '')
+).replace(/\/+$/, '');
 
 const LOCAL_STORAGE_CLIENT_ID_KEY = 'fraudora_client_id';
 const LOCAL_STORAGE_HISTORY_KEY = 'fraudora_local_history';
+
+// null = not checked yet, true = server history available, false = use browser storage only.
+let serverHistoryEnabled = null;
 
 /**
  * Get or generate persistent client ID for browser session.
@@ -262,8 +272,12 @@ export async function fetchRoot() {
  */
 export async function fetchHealth() {
   try {
-    return await request('/health');
+    const health = await request('/health');
+    serverHistoryEnabled = Boolean(health?.history);
+    return health;
   } catch (err) {
+    // Do not keep retrying history endpoints when the API is unreachable.
+    serverHistoryEnabled = false;
     return {
       status: 'offline',
       history: false,
@@ -304,8 +318,27 @@ export async function scanMessage(message) {
  * Falls back to local storage if Supabase history is not configured (503)
  */
 export async function fetchHistory(limit = 20, offset = 0) {
+  const localResult = (notice) => ({
+    items: getLocalHistory().slice(offset, offset + limit),
+    limit,
+    offset,
+    source: 'local',
+    notice,
+  });
+
+  // Server history is optional. If it is disabled (or the API is offline), go
+  // straight to browser storage instead of sending a request that will fail.
+  if (serverHistoryEnabled === false) {
+    return localResult('Server history unavailable; using browser storage.');
+  }
+
   try {
     const res = await request(`/api/history?limit=${limit}&offset=${offset}`);
+    const enabled = res.history_enabled !== false;
+    serverHistoryEnabled = enabled;
+    if (!enabled) {
+      return localResult('Server history is not configured; using browser storage.');
+    }
     return {
       items: (res.items || []).map((item) => ({
         id: item.id,
@@ -321,15 +354,11 @@ export async function fetchHistory(limit = 20, offset = 0) {
       source: 'server',
     };
   } catch (err) {
-    // Graceful fallback to local history if server history is unavailable or returns 503
-    const local = getLocalHistory();
-    return {
-      items: local.slice(offset, offset + limit),
-      limit,
-      offset,
-      source: 'local',
-      notice: err.status === 503 ? 'Server history not configured; using browser storage.' : undefined,
-    };
+    // Graceful fallback to local history if server history is unavailable.
+    if (err.status === 503) serverHistoryEnabled = false;
+    return localResult(
+      err.status === 503 ? 'Server history is not configured; using browser storage.' : undefined,
+    );
   }
 }
 
@@ -337,13 +366,26 @@ export async function fetchHistory(limit = 20, offset = 0) {
  * 6. GET /api/history/{scan_id} - Fetch full scan report
  */
 export async function fetchHistoryItem(scanId) {
+  const local = getLocalHistory().find((i) => i.id === scanId);
+
+  // When server history is not configured the list comes from localStorage, so
+  // open the locally cached copy without attempting a server request.
+  if (serverHistoryEnabled !== true && local?.full) {
+    return local.full;
+  }
+  if (serverHistoryEnabled === false) {
+    const err = new Error('That scan is no longer available in this browser.');
+    err.status = 404;
+    throw err;
+  }
+
   try {
     const raw = await request(`/api/history/${encodeURIComponent(scanId)}`);
+    serverHistoryEnabled = true;
     return adaptScanResponse(raw);
   } catch (err) {
     // Check local fallback
-    const local = getLocalHistory().find((i) => i.id === scanId);
-    if (local && local.full) {
+    if (local?.full) {
       return local.full;
     }
     throw err;
@@ -355,12 +397,20 @@ export async function fetchHistoryItem(scanId) {
  */
 export async function deleteHistoryItem(scanId) {
   removeLocalHistoryItem(scanId);
+
+  if (serverHistoryEnabled === false) {
+    return { deleted: 1, source: 'local', history_enabled: false };
+  }
+
   try {
-    return await request(`/api/history/${encodeURIComponent(scanId)}`, {
+    const res = await request(`/api/history/${encodeURIComponent(scanId)}`, {
       method: 'DELETE',
     });
+    serverHistoryEnabled = res.history_enabled !== false;
+    return res;
   } catch (err) {
     // If server history is not configured, local removal is sufficient
+    if (err.status === 503) serverHistoryEnabled = false;
     return { deleted: 1, source: 'local' };
   }
 }
@@ -370,11 +420,19 @@ export async function deleteHistoryItem(scanId) {
  */
 export async function clearAllHistory() {
   clearLocalHistoryStorage();
+
+  if (serverHistoryEnabled === false) {
+    return { deleted: 1, source: 'local', history_enabled: false };
+  }
+
   try {
-    return await request('/api/history', {
+    const res = await request('/api/history', {
       method: 'DELETE',
     });
+    serverHistoryEnabled = res.history_enabled !== false;
+    return res;
   } catch (err) {
+    if (err.status === 503) serverHistoryEnabled = false;
     return { deleted: 1, source: 'local' };
   }
 }

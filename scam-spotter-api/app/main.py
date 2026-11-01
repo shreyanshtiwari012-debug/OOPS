@@ -161,8 +161,18 @@ async def rules(s: Settings = Depends(get_settings)):
 async def history(x_client_id: ClientHeader = None, limit: int = Query(20, ge=1, le=100),
                   offset: int = Query(0, ge=0), store: HistoryStore = Depends(_store)):
     cid = _client_id(x_client_id, required=True)
+    # History is optional. When it is not configured, return an empty list instead of
+    # an error so the browser does not log a failed request on every page load.
+    # The frontend then uses its local (localStorage) history.
+    if not store.enabled:
+        return {"items": [], "limit": limit, "offset": offset, "history_enabled": False}
     try:
-        return {"items": await store.list(cid, limit, offset), "limit": limit, "offset": offset}
+        return {
+            "items": await store.list(cid, limit, offset),
+            "limit": limit,
+            "offset": offset,
+            "history_enabled": True,
+        }
     except StoreError as e:
         raise HTTPException(503, str(e))
 
@@ -170,8 +180,11 @@ async def history(x_client_id: ClientHeader = None, limit: int = Query(20, ge=1,
 @app.get("/api/history/{scan_id}", response_model=ScanResponse)
 async def history_item(scan_id: str, x_client_id: ClientHeader = None, store: HistoryStore = Depends(_store)):
     cid = _client_id(x_client_id, required=True)
+    scan_id = _check_uuid(scan_id)
+    if not store.enabled:
+        raise HTTPException(404, "Scan not found.")
     try:
-        row = await store.get(cid, _check_uuid(scan_id))
+        row = await store.get(cid, scan_id)
     except StoreError as e:
         raise HTTPException(503, str(e))
     if not row:
@@ -182,19 +195,24 @@ async def history_item(scan_id: str, x_client_id: ClientHeader = None, store: Hi
 @app.delete("/api/history/{scan_id}")
 async def delete_item(scan_id: str, x_client_id: ClientHeader = None, store: HistoryStore = Depends(_store)):
     cid = _client_id(x_client_id, required=True)
+    scan_id = _check_uuid(scan_id)
+    if not store.enabled:
+        return {"deleted": 0, "history_enabled": False}
     try:
-        n = await store.delete(cid, _check_uuid(scan_id))
+        n = await store.delete(cid, scan_id)
     except StoreError as e:
         raise HTTPException(503, str(e))
     if not n:
         raise HTTPException(404, "Scan not found.")
-    return {"deleted": n}
+    return {"deleted": n, "history_enabled": True}
 
 
 @app.delete("/api/history")
 async def delete_all(x_client_id: ClientHeader = None, store: HistoryStore = Depends(_store)):
     cid = _client_id(x_client_id, required=True)
+    if not store.enabled:
+        return {"deleted": 0, "history_enabled": False}
     try:
-        return {"deleted": await store.delete_all(cid)}
+        return {"deleted": await store.delete_all(cid), "history_enabled": True}
     except StoreError as e:
         raise HTTPException(503, str(e))
