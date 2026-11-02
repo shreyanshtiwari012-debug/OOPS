@@ -185,3 +185,25 @@ The API does not require a client ID to scan a message. A client ID is required 
 |---|---|
 | Kaustav Paul | Frontend Lead |
 | Shreyansh Tiwari | Backend Lead |
+
+## Browser checks
+
+Install Playwright's Chromium once, then run the desktop (1440px), tablet
+(768px), and mobile (390px) checks:
+
+```bash
+npx playwright install chromium
+npm run test:e2e
+```
+
+The tests build and start the production preview automatically, or reuse a
+preview already running on port 4173. They cover validation, help keyboard
+navigation, loading and error states, offline risk scoring, the API response
+adapter, detailed report navigation, and horizontal overflow. API responses are
+intercepted for repeatability; these tests do not verify the deployed backend.
+Screenshots are saved under `.taste-skill/playwright/`, and the HTML report is
+available with `npx playwright show-report`.
+
+In the current agent environment Chromium is installed under
+`/tmp/fraudora-playwright`; run with
+`PLAYWRIGHT_BROWSERS_PATH=/tmp/fraudora-playwright npm run test:e2e` to reuse it.
