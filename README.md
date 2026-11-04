@@ -177,13 +177,7 @@ The API does not require a client ID to scan a message. A client ID is required 
 - Keep service-role keys and API keys on the backend. Never expose them in frontend environment variables or commit them to source control.
 - A scan is guidance, not a guarantee. Verify account or payment issues by contacting the organization through a trusted number or website.
 
-## Team
 
-**Core2Duo**
-
-| Team member | Role |
-|---|---|
-| Kaustav Paul | Frontend Lead |
 | Shreyansh Tiwari | Backend Lead |
 
 ## Browser checks
